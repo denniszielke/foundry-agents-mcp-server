@@ -1,0 +1,27 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/Azure/azure-dev/main/schemas/v1.0/azure.yaml.json
+
+name: foundry-agents-mcp-server
+metadata:
+  template: foundry-agents-mcp-server@0.1.0
+services:
+  server:
+    project: .
+    language: docker
+    host: containerapp
+    docker:
+      path: ./Dockerfile
+      context: .
+infra:
+  provider: bicep
+hooks:
+  postprovision:
+    posix:
+      shell: sh
+      continueOnError: true
+      interactive: false
+      run: infra/write_env.sh
+    windows:
+      shell: pwsh
+      continueOnError: true
+      interactive: false
+      run: infra/write_env.ps1

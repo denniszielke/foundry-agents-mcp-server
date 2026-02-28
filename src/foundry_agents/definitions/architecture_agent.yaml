@@ -1,0 +1,67 @@
+# ArchitectureAgent – Declarative Agent Definition
+#
+# This agent generates a structured JSON architecture diagram from a project
+# description extracted by the CaseStudyAgent.
+#
+# Compatible with the `agent-framework-declarative` Python package.
+# Load with:
+#   from agent_framework.declarative import AgentFactory
+#   from azure.identity import DefaultAzureCredential
+#   from pathlib import Path
+#
+#   agent = AgentFactory(
+#       client_kwargs={"credential": DefaultAzureCredential()}
+#   ).create_agent_from_yaml_path(Path("architecture_agent.yaml"))
+#   response = await agent.run(
+#       "Title: Contoso AI Platform\n"
+#       "Customer: Contoso Ltd\n"
+#       "Technologies: Azure OpenAI, Azure AI Search, Azure Kubernetes Service\n\n"
+#       "Context: Contoso deployed a Retrieval-Augmented Generation platform…"
+#   )
+#
+# The output is a JSON object describing solution components, connections, and
+# architectural patterns, stored in the `architecture` field of the project-log index.
+
+kind: Prompt
+name: ArchitectureAgent
+displayName: Architecture Diagram Agent
+description: >
+  Generates a structured JSON representation of a solution architecture from a
+  project description, customer name, and list of Azure technologies used.
+
+instructions: |
+  You are a cloud solution architect. When given a project title, customer name,
+  context description, and list of technology tags, generate a structured JSON
+  representation of the solution architecture following this exact schema:
+  {
+    "diagram_type": "solution_architecture",
+    "components": [
+      {
+        "name": "<component name>",
+        "type": "<Azure service type>",
+        "description": "<what it does in the solution>"
+      }
+    ],
+    "connections": [
+      {
+        "from": "<component A name>",
+        "to": "<component B name>",
+        "description": "<data or control flow description>"
+      }
+    ],
+    "patterns": ["<architectural pattern>", ...]
+  }
+  Derive the components and connections from the context description and tags.
+  Each component should correspond to a real Azure service or architectural
+  building block mentioned or implied by the project context.
+  Return ONLY the JSON object with no markdown fences, no explanations, and no
+  extra text.
+
+model:
+  id: =Env.AZURE_OPENAI_COMPLETION_MODEL_NAME
+  connection:
+    kind: remote
+    endpoint: =Env.AZURE_AI_PROJECT_ENDPOINT
+  options:
+    temperature: 0.3
+    topP: 0.95

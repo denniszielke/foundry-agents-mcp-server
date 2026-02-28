@@ -1,0 +1,67 @@
+# ProjectLogWorkflow – Declarative Workflow Definition  (MOVED)
+#
+# The authoritative copy of this file is now at:
+#   src/foundry_agents/definitions/project_log_workflow.yaml
+#
+# Run with:  run-project-log-workflow --url <story_url>
+#
+#   1. CaseStudyAgent  – retrieves and structures the customer story metadata
+#   2. ArchitectureAgent – generates the solution architecture diagram
+#
+# The combined result is then stored in the Azure AI Search project-log index.
+#
+# Format: `kind: Workflow` (Microsoft Agent Framework declarative YAML)
+# Reference: https://github.com/microsoft/agent-framework/blob/main/workflow-samples/Marketing.yaml
+#
+# Example input:
+#   Ingest this Microsoft customer story:
+#   https://www.microsoft.com/en/customers/story/25676-commerzbank-ag-azure-ai-foundry-agent-service
+#
+# To run this workflow programmatically via the MCP server, use:
+#   workflows_run_project_log_workflow(story_url="https://...", project_name="MyProject")
+
+kind: Workflow
+trigger:
+
+  kind: OnConversationStart
+  id: project_log_workflow
+  actions:
+
+    # Step 1 – CaseStudyAgent: fetch and parse the Microsoft customer story.
+    # Outputs a structured JSON object with title, customer_name, short_summary,
+    # context, tags, and reference_url stored in Local.CaseStudy.
+    - kind: InvokeAzureAgent
+      id: invoke_case_study_agent
+      conversationId: =System.ConversationId
+      agent:
+        name: CaseStudyAgent
+      output:
+        responseObject: Local.CaseStudy
+
+    # Step 2 – ArchitectureAgent: generate a JSON architecture diagram from
+    # the case study context and technology tags extracted in Step 1.
+    - kind: InvokeAzureAgent
+      id: invoke_architecture_agent
+      conversationId: =System.ConversationId
+      agent:
+        name: ArchitectureAgent
+      input:
+        arguments:
+          Title: =Local.CaseStudy.title
+          Customer: =Local.CaseStudy.customer_name
+          Technologies: =Local.CaseStudy.tags
+          Context: =Local.CaseStudy.context
+      output:
+        responseObject: Local.Architecture
+
+    # Step 3 – Report the completed workflow result including both the case
+    # study metadata and the generated architecture diagram.
+    - kind: SendActivity
+      id: report_result
+      activity: >
+        Project log entry created for {Local.CaseStudy.customer_name}:
+        Title: {Local.CaseStudy.title}
+        Architecture components: {Local.Architecture.components}
+
+    - kind: EndWorkflow
+      id: workflow_done

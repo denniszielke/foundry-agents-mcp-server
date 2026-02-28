@@ -1,0 +1,14 @@
+{
+  "servers": {
+    "foundry-agents-mcp-stdio": {
+      "type": "stdio",
+      "command": "uvx",
+      "args": ["--from", ".", "foundry-agents-mcp-server"],
+      "env": {}
+    },
+    "foundry-agents-mcp-http": {
+      "type": "http",
+      "url": "http://localhost:8000/mcp"
+    }
+  }
+}

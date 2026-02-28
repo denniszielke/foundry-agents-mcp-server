@@ -1,0 +1,67 @@
+# CaseStudyAgent – Declarative Agent Definition  (MOVED)
+#
+# The authoritative copy of this file is now at:
+#   src/foundry_agents/definitions/case_study_agent.yaml
+#
+# Deploy with:  deploy-case-study-agent
+#
+# Compatible with the `agent-framework-declarative` Python package.
+# Load with:
+#   from agent_framework.declarative import AgentFactory
+#   from azure.identity import DefaultAzureCredential
+#   from pathlib import Path
+#
+#   agent = AgentFactory(
+#       client_kwargs={"credential": DefaultAzureCredential()},
+#       bindings={"fetch_web_page": fetch_web_page},  # Python function to fetch URL content
+#   ).create_agent_from_yaml_path(Path("case_study_agent.yaml"))
+#   response = await agent.run("Retrieve this story: https://www.microsoft.com/...")
+#
+# When used in the `workflows_run_project_log_workflow` MCP tool, the page
+# content is fetched by the Python workflow and passed directly to the model.
+
+kind: Prompt
+name: CaseStudyAgent
+displayName: Case Study Agent
+description: >
+  Extracts structured metadata from Microsoft customer success story text and
+  returns a JSON object ready for ingestion into the project-log vector index.
+
+instructions: |
+  You extract structured information from Microsoft customer success story text.
+  When given the text content of a customer story page, extract and return ONLY
+  a valid JSON object with these fields:
+  {
+    "title": "<story title>",
+    "customer_name": "<customer organization name>",
+    "short_summary": "<1–2 sentence summary of the project>",
+    "context": "<200–400 word description: challenges faced, Azure solution adopted, and measurable outcomes>",
+    "tags": ["<Azure service or technology>", ...],
+    "reference_url": "<original URL if mentioned or provided, else empty string>"
+  }
+  Be factual and precise. Return ONLY the JSON object with no markdown fences,
+  no explanations, and no extra text.
+
+model:
+  id: =Env.AZURE_OPENAI_COMPLETION_MODEL_NAME
+  connection:
+    kind: remote
+    endpoint: =Env.AZURE_AI_PROJECT_ENDPOINT
+  options:
+    temperature: 0.1
+    topP: 0.95
+
+tools:
+  - kind: function
+    name: fetch_web_page
+    description: >
+      Fetch and return the visible text content of a web page given its URL.
+      Use this tool to retrieve Microsoft customer story pages before extracting metadata.
+    bindings:
+      fetch_web_page: fetch_web_page
+    parameters:
+      properties:
+        url:
+          kind: string
+          description: The fully-qualified URL of the web page to fetch.
+          required: true
