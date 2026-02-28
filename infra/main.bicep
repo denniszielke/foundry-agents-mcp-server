@@ -1,207 +1,183 @@
 targetScope = 'subscription'
 
-// ── Parameters ────────────────────────────────────────────────────────────────
-
 @minLength(1)
 @maxLength(64)
-@description('Name used to generate a unique token for all resources')
-param name string
+@description('Name of the the environment which is used to generate a short unique hash used in all resources.')
+param environmentName string
 
 @minLength(1)
-@description('Primary Azure region for all resources')
+@description('Primary location for all resources')
+@allowed(['northcentralus', 'swedencentral', 'eastus2', 'westus3'])
 param location string
 
-@description('Object ID of the deploying user or service principal (used for role assignments)')
-param principalId string = ''
+param resourceGroupName string = ''
+param containerAppsEnvironmentName string = ''
+param containerRegistryName string = ''
+param foundryName string = ''
+param applicationInsightsDashboardName string = ''
+param applicationInsightsName string = ''
+param logAnalyticsName string = ''
+param aiSearchName string = ''
+param aiSearchIndexName string = 'project-log-index'
 
-@description('Set by azd after the container image has been built once')
-param serverExists bool = false
+@description('Deploy the MCP server with private (VNet-internal) ingress only')
+param usePrivateIngress bool = false
 
-// ── Variables ─────────────────────────────────────────────────────────────────
+var abbrs = loadJsonContent('./abbreviations.json')
+var resourceToken = toLower(uniqueString(subscription().id, environmentName, location))
+var tags = { 'azd-env-name': environmentName }
 
-var resourceToken = toLower(uniqueString(subscription().id, name, location))
-var tags = { 'azd-env-name': name }
-var prefix = '${name}-${resourceToken}'
+// Model deployment configuration
+param completionDeploymentModelName string = 'gpt-4o'
+param completionModelName string = 'gpt-4o'
+param completionModelVersion string = '2024-11-20'
 
-// ── Resource group ─────────────────────────────────────────────────────────────
+param embeddingDeploymentModelName string = 'text-embedding-3-small'
+param embeddingModelName string = 'text-embedding-3-small'
 
-resource rg 'Microsoft.Resources/resourceGroups@2021-04-01' = {
-  name: '${name}-rg'
+param foundryApiVersion string = '2024-10-21'
+param foundryCapacity int = 30
+
+param modelDeployments array = [
+  {
+    name: completionDeploymentModelName
+    sku: 'GlobalStandard'
+    model: {
+      format: 'OpenAI'
+      name: completionModelName
+      version: completionModelVersion
+    }
+  }
+  {
+    name: embeddingDeploymentModelName
+    sku: 'GlobalStandard'
+    model: {
+      format: 'OpenAI'
+      name: embeddingModelName
+      version: '1'
+    }
+  }
+]
+
+// Organize resources in a resource group
+resource resourceGroup 'Microsoft.Resources/resourceGroups@2021-04-01' = {
+  name: !empty(resourceGroupName) ? resourceGroupName : '${abbrs.resourcesResourceGroups}${environmentName}'
   location: location
   tags: tags
 }
 
-// ── Log Analytics + Application Insights ──────────────────────────────────────
-
-module logAnalytics 'br/public:avm/res/operational-insights/workspace:0.7.0' = {
-  name: 'loganalytics'
-  scope: rg
+// Virtual network (always deployed – Container Apps environment is VNet-integrated)
+module vnet './core/host/vnet.bicep' = {
+  name: 'vnet'
+  scope: resourceGroup
   params: {
-    name: '${prefix}-logs'
+    location: location
+  }
+}
+
+// Container Apps environment + Container Registry
+module containerApps './core/host/container-apps.bicep' = {
+  name: 'container-apps'
+  scope: resourceGroup
+  params: {
+    name: 'app'
+    containerAppsEnvironmentName: !empty(containerAppsEnvironmentName) ? containerAppsEnvironmentName : '${abbrs.appManagedEnvironments}${resourceToken}'
+    containerRegistryName: !empty(containerRegistryName) ? containerRegistryName : '${abbrs.containerRegistryRegistries}${resourceToken}'
+    location: location
+    logAnalyticsWorkspaceName: monitoring.outputs.logAnalyticsWorkspaceName
+    usePrivateIngress: usePrivateIngress
+  }
+}
+
+// Azure AI Foundry (AIServices account + project + model deployments)
+module foundry './ai/foundry.bicep' = {
+  name: 'foundry'
+  scope: resourceGroup
+  params: {
     location: location
     tags: tags
-    skuName: 'PerGB2018'
-    dataRetention: 30
+    customDomainName: !empty(foundryName) ? foundryName : '${abbrs.cognitiveServicesAccounts}${resourceToken}'
+    name: !empty(foundryName) ? foundryName : '${abbrs.cognitiveServicesAccounts}${resourceToken}'
+    deployments: modelDeployments
+    capacity: foundryCapacity
   }
 }
 
-module appInsights 'br/public:avm/res/insights/component:0.4.2' = {
-  name: 'appinsights'
-  scope: rg
+// Azure AI Search
+module search './ai/search.bicep' = {
+  name: 'search'
+  scope: resourceGroup
   params: {
-    name: '${prefix}-appinsights'
     location: location
     tags: tags
-    workspaceResourceId: logAnalytics.outputs.resourceId
-    kind: 'web'
-    applicationType: 'web'
+    name: !empty(aiSearchName) ? aiSearchName : '${abbrs.searchSearchServices}${resourceToken}'
   }
 }
 
-// ── Container Registry ────────────────────────────────────────────────────────
-
-module acr 'br/public:avm/res/container-registry/registry:0.6.0' = {
-  name: 'acr'
-  scope: rg
+// Monitor application with Azure Monitor
+module monitoring './core/monitor/monitoring.bicep' = {
+  name: 'monitoring'
+  scope: resourceGroup
   params: {
-    name: '${resourceToken}acr'
     location: location
     tags: tags
-    acrSku: 'Basic'
-    adminUserEnabled: false
+    logAnalyticsName: !empty(logAnalyticsName) ? logAnalyticsName : '${abbrs.operationalInsightsWorkspaces}${resourceToken}'
+    applicationInsightsName: !empty(applicationInsightsName) ? applicationInsightsName : '${abbrs.insightsComponents}${resourceToken}'
+    applicationInsightsDashboardName: !empty(applicationInsightsDashboardName) ? applicationInsightsDashboardName : '${abbrs.portalDashboards}${resourceToken}'
   }
 }
 
-// ── Container Apps Environment ────────────────────────────────────────────────
-
-module containerAppsEnv 'br/public:avm/res/app/managed-environment:0.8.0' = {
-  name: 'containerAppsEnv'
-  scope: rg
+// MCP Server Container App
+module mcpServer './app/server.bicep' = {
+  name: 'mcp-server'
+  scope: resourceGroup
   params: {
-    name: '${prefix}-env'
+    name: '${abbrs.appContainerApps}mcp-server-${resourceToken}'
     location: location
     tags: tags
-    logAnalyticsWorkspaceResourceId: logAnalytics.outputs.resourceId
-  }
-}
-
-// ── User-assigned managed identity ────────────────────────────────────────────
-
-module managedIdentity 'br/public:avm/res/managed-identity/user-assigned-identity:0.4.0' = {
-  name: 'managedIdentity'
-  scope: rg
-  params: {
-    name: '${prefix}-identity'
-    location: location
-    tags: tags
-  }
-}
-
-// ── Role assignments ───────────────────────────────────────────────────────────
-// All Azure services authenticated through DefaultAzureCredential / managed identity
-
-// ACR pull – let the Container App pull its own image
-module acrPullRole 'core/security/role.bicep' = {
-  name: 'acrPullRole'
-  scope: rg
-  params: {
-    principalId: managedIdentity.outputs.principalId
-    roleDefinitionId: '7f951dda-4ed3-4680-a7ca-43fe172d538d' // AcrPull
-    principalType: 'ServicePrincipal'
-  }
-}
-
-// Azure AI Developer – access to AI Foundry project (agents, inference)
-module aiProjectRole 'core/security/role.bicep' = {
-  name: 'aiProjectRole'
-  scope: rg
-  params: {
-    principalId: managedIdentity.outputs.principalId
-    roleDefinitionId: '64702f94-c441-49e6-a78b-ef80e0188fee' // Azure AI Developer
-    principalType: 'ServicePrincipal'
-  }
-}
-
-// Cognitive Services User – Azure OpenAI embeddings & chat completions
-module cogServicesRole 'core/security/role.bicep' = {
-  name: 'cogServicesRole'
-  scope: rg
-  params: {
-    principalId: managedIdentity.outputs.principalId
-    roleDefinitionId: 'a97b65f3-24c7-4388-baec-2e87135dc908' // Cognitive Services User
-    principalType: 'ServicePrincipal'
-  }
-}
-
-// Search Index Data Contributor – read/write to Azure AI Search
-module searchContribRole 'core/security/role.bicep' = {
-  name: 'searchContribRole'
-  scope: rg
-  params: {
-    principalId: managedIdentity.outputs.principalId
-    roleDefinitionId: '8ebe5a00-799e-43f5-93ac-243d3dce84a7' // Search Index Data Contributor
-    principalType: 'ServicePrincipal'
-  }
-}
-
-// Optionally give the deploying user the same access for local development
-module devAiProjectRole 'core/security/role.bicep' = if (!empty(principalId)) {
-  name: 'devAiProjectRole'
-  scope: rg
-  params: {
-    principalId: principalId
-    roleDefinitionId: '64702f94-c441-49e6-a78b-ef80e0188fee' // Azure AI Developer
-    principalType: 'User'
-  }
-}
-
-module devSearchRole 'core/security/role.bicep' = if (!empty(principalId)) {
-  name: 'devSearchRole'
-  scope: rg
-  params: {
-    principalId: principalId
-    roleDefinitionId: '8ebe5a00-799e-43f5-93ac-243d3dce84a7' // Search Index Data Contributor
-    principalType: 'User'
-  }
-}
-
-// ── Container App ─────────────────────────────────────────────────────────────
-
-module serverApp 'app/server.bicep' = {
-  name: 'serverApp'
-  scope: rg
-  params: {
-    name: '${prefix}-server'
-    location: location
-    tags: union(tags, { 'azd-service-name': 'server' })
-    containerAppsEnvironmentId: containerAppsEnv.outputs.resourceId
-    containerRegistryName: acr.outputs.name
-    managedIdentityId: managedIdentity.outputs.resourceId
-    managedIdentityClientId: managedIdentity.outputs.clientId
-    exists: serverExists
-    applicationInsightsConnectionString: appInsights.outputs.connectionString
-    // External Azure service endpoints – supply via azd env vars
-    azureAiProjectEndpoint: ''   // Set AZURE_AI_PROJECT_ENDPOINT in azd env
-    azureAiSearchEndpoint: ''    // Set AZURE_AI_SEARCH_ENDPOINT in azd env
-    azureOpenAiEndpoint: ''      // Set AZURE_OPENAI_ENDPOINT in azd env
-    azureOpenAiEmbeddingModel: 'text-embedding-3-small'
-    azureOpenAiCompletionModel: ''  // Set AZURE_OPENAI_COMPLETION_MODEL_NAME in azd env
+    identityName: '${abbrs.managedIdentityUserAssignedIdentities}mcp-server-${resourceToken}'
+    foundryName: foundry.outputs.foundryName
+    foundryEndpoint: foundry.outputs.openaiEndpoint
+    foundryProjectEndpoint: foundry.outputs.foundryProjectEndpoint
+    searchName: search.outputs.searchName
+    searchEndpoint: search.outputs.searchEndpoint
+    searchIndexName: aiSearchIndexName
+    completionDeploymentModelName: completionDeploymentModelName
+    embeddingDeploymentModelName: embeddingDeploymentModelName
+    foundryApiVersion: foundryApiVersion
+    applicationInsightsName: monitoring.outputs.applicationInsightsName
+    containerAppsEnvironmentName: containerApps.outputs.environmentName
+    containerRegistryName: containerApps.outputs.registryName
+    imageName: ''
+    usePrivateIngress: usePrivateIngress
   }
 }
 
 // ── Outputs ────────────────────────────────────────────────────────────────────
 
-@description('URL of the deployed MCP server (HTTP transport)')
-output MCP_SERVER_URL string = 'https://${serverApp.outputs.fqdn}/mcp'
+output AZURE_LOCATION string = location
+output AZURE_TENANT_ID string = tenant().tenantId
+output AZURE_RESOURCE_GROUP string = resourceGroup.name
 
-@description('Resource group name')
-output RESOURCE_GROUP string = rg.name
+output APPLICATIONINSIGHTS_CONNECTION_STRING string = monitoring.outputs.applicationInsightsConnectionString
+output APPLICATIONINSIGHTS_NAME string = monitoring.outputs.applicationInsightsName
 
-@description('Container registry name')
-output AZURE_CONTAINER_REGISTRY_NAME string = acr.outputs.name
+output AZURE_CONTAINER_ENVIRONMENT_NAME string = containerApps.outputs.environmentName
+output AZURE_CONTAINER_REGISTRY_ENDPOINT string = containerApps.outputs.registryLoginServer
+output AZURE_CONTAINER_REGISTRY_NAME string = containerApps.outputs.registryName
 
-@description('Container Apps environment name')
-output AZURE_CONTAINER_APPS_ENVIRONMENT_NAME string = containerAppsEnv.outputs.name
+output AZURE_AI_FOUNDRY_ENDPOINT string = foundry.outputs.openaiEndpoint
+output AZURE_AI_PROJECT_ENDPOINT string = foundry.outputs.foundryProjectEndpoint
+output AZURE_OPENAI_ENDPOINT string = foundry.outputs.openaiEndpoint
+output AZURE_OPENAI_COMPLETION_MODEL_NAME string = completionDeploymentModelName
+output AZURE_OPENAI_EMBEDDING_MODEL string = embeddingModelName
+output AZURE_OPENAI_EMBEDDING_DIMENSIONS string = '1536'
+output AZURE_OPENAI_API_VERSION string = foundryApiVersion
 
-@description('Application Insights connection string')
-output APPLICATIONINSIGHTS_CONNECTION_STRING string = appInsights.outputs.connectionString
+output AZURE_AI_SEARCH_NAME string = search.outputs.searchName
+output AZURE_AI_SEARCH_ENDPOINT string = search.outputs.searchEndpoint
+output AZURE_AI_SEARCH_INDEX_NAME string = aiSearchIndexName
+
+output DEFAULT_DOMAIN string = containerApps.outputs.defaultDomain
+output MCP_SERVER_URL string = '${mcpServer.outputs.SERVICE_SERVER_URI}/mcp'
+

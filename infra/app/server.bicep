@@ -1,113 +1,104 @@
-// Container App for the Foundry Agents MCP Server
 param name string
-param location string
+param location string = resourceGroup().location
 param tags object = {}
 
-param containerAppsEnvironmentId string
+param foundryName string
+param foundryEndpoint string
+param foundryProjectEndpoint string
+
+param searchName string
+param searchEndpoint string
+param searchIndexName string
+
+param completionDeploymentModelName string
+param embeddingDeploymentModelName string
+param foundryApiVersion string
+
+param identityName string
+param applicationInsightsName string
+param containerAppsEnvironmentName string
 param containerRegistryName string
-param managedIdentityId string
-param managedIdentityClientId string
-param exists bool = false
+param serviceName string = 'server'
+param imageName string
+param usePrivateIngress bool = false
 
-// Runtime configuration
-param applicationInsightsConnectionString string = ''
-param azureAiProjectEndpoint string = ''
-param azureAiSearchEndpoint string = ''
-param azureAiSearchIndexName string = 'project-log-index'
-param azureOpenAiEndpoint string = ''
-param azureOpenAiEmbeddingModel string = 'text-embedding-3-small'
-param azureOpenAiEmbeddingDimensions string = '1536'
-param azureOpenAiCompletionModel string = ''
-
-// ── Placeholder image used on first deploy before azd builds the real one ─────
-var placeholderImage = 'mcr.microsoft.com/azuredocs/containerapps-helloworld:latest'
-var containerImage = exists ? '${containerRegistryName}.azurecr.io/foundry-agents-mcp-server:latest' : placeholderImage
-
-// ── Container App ─────────────────────────────────────────────────────────────
-
-resource app 'Microsoft.App/containerApps@2024-03-01' = {
-  name: name
+resource apiIdentity 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' = {
+  name: identityName
   location: location
-  tags: tags
-  identity: {
-    type: 'UserAssigned'
-    userAssignedIdentities: {
-      '${managedIdentityId}': {}
-    }
-  }
-  properties: {
-    environmentId: containerAppsEnvironmentId
-    configuration: {
-      ingress: {
-        external: true
-        targetPort: 8000
-        transport: 'http'
-        allowInsecure: false
+}
+
+module app '../core/host/container-app-upsert.bicep' = {
+  name: '${serviceName}-container-app'
+  params: {
+    name: name
+    location: location
+    imageName: imageName
+    tags: union(tags, { 'azd-service-name': serviceName })
+    identityName: identityName
+    foundryName: foundryName
+    containerAppsEnvironmentName: containerAppsEnvironmentName
+    containerRegistryName: containerRegistryName
+    searchName: searchName
+    external: !usePrivateIngress
+    targetPort: 8000
+    env: [
+      {
+        name: 'RUNNING_IN_PRODUCTION'
+        value: 'true'
       }
-      registries: [
-        {
-          server: '${containerRegistryName}.azurecr.io'
-          identity: managedIdentityId
-        }
-      ]
-    }
-    template: {
-      containers: [
-        {
-          name: 'mcp-server'
-          image: containerImage
-          resources: {
-            cpu: json('0.5')
-            memory: '1Gi'
-          }
-          env: [
-            { name: 'RUNNING_IN_PRODUCTION',              value: 'true' }
-            { name: 'AZURE_CLIENT_ID',                    value: managedIdentityClientId }
-            { name: 'TRANSPORT',                          value: 'http' }
-            { name: 'APPLICATIONINSIGHTS_CONNECTION_STRING', value: applicationInsightsConnectionString }
-            { name: 'AZURE_AI_PROJECT_ENDPOINT',          value: azureAiProjectEndpoint }
-            { name: 'AZURE_AI_SEARCH_ENDPOINT',           value: azureAiSearchEndpoint }
-            { name: 'AZURE_AI_SEARCH_INDEX_NAME',         value: azureAiSearchIndexName }
-            { name: 'AZURE_OPENAI_ENDPOINT',              value: azureOpenAiEndpoint }
-            { name: 'AZURE_OPENAI_EMBEDDING_MODEL',       value: azureOpenAiEmbeddingModel }
-            { name: 'AZURE_OPENAI_EMBEDDING_DIMENSIONS',  value: azureOpenAiEmbeddingDimensions }
-            { name: 'AZURE_OPENAI_COMPLETION_MODEL_NAME', value: azureOpenAiCompletionModel }
-          ]
-          probes: [
-            {
-              type: 'Liveness'
-              httpGet: {
-                path: '/health'
-                port: 8000
-                scheme: 'HTTP'
-              }
-              initialDelaySeconds: 10
-              periodSeconds: 30
-              failureThreshold: 3
-            }
-            {
-              type: 'Readiness'
-              httpGet: {
-                path: '/health'
-                port: 8000
-                scheme: 'HTTP'
-              }
-              initialDelaySeconds: 5
-              periodSeconds: 10
-              failureThreshold: 3
-            }
-          ]
-        }
-      ]
-      scale: {
-        minReplicas: 1
-        maxReplicas: 3
+      {
+        name: 'AZURE_CLIENT_ID'
+        value: apiIdentity.properties.clientId
       }
-    }
+      {
+        name: 'TRANSPORT'
+        value: 'http'
+      }
+      {
+        name: 'APPLICATIONINSIGHTS_CONNECTION_STRING'
+        value: applicationInsights.properties.ConnectionString
+      }
+      {
+        name: 'AZURE_AI_PROJECT_ENDPOINT'
+        value: foundryProjectEndpoint
+      }
+      {
+        name: 'AZURE_OPENAI_ENDPOINT'
+        value: foundryEndpoint
+      }
+      {
+        name: 'AZURE_OPENAI_COMPLETION_MODEL_NAME'
+        value: completionDeploymentModelName
+      }
+      {
+        name: 'AZURE_OPENAI_EMBEDDING_MODEL'
+        value: embeddingDeploymentModelName
+      }
+      {
+        name: 'AZURE_OPENAI_EMBEDDING_DIMENSIONS'
+        value: '1536'
+      }
+      {
+        name: 'AZURE_OPENAI_API_VERSION'
+        value: foundryApiVersion
+      }
+      {
+        name: 'AZURE_AI_SEARCH_ENDPOINT'
+        value: searchEndpoint
+      }
+      {
+        name: 'AZURE_AI_SEARCH_INDEX_NAME'
+        value: searchIndexName
+      }
+    ]
   }
 }
 
-// ── Outputs ───────────────────────────────────────────────────────────────────
+resource applicationInsights 'Microsoft.Insights/components@2020-02-02' existing = {
+  name: applicationInsightsName
+}
 
-output fqdn string = app.properties.configuration.ingress.fqdn
-output name string = app.name
+output SERVICE_SERVER_IDENTITY_PRINCIPAL_ID string = apiIdentity.properties.principalId
+output SERVICE_SERVER_NAME string = app.outputs.name
+output SERVICE_SERVER_URI string = app.outputs.uri
+output SERVICE_SERVER_IMAGE_NAME string = app.outputs.imageName

@@ -66,30 +66,23 @@ uvx --env-file .env foundry-agents-mcp-server
 
 ## Configuration
 
-Set the following environment variables (e.g. in a `.env` file):
+All configuration is driven by environment variables. Copy `.env.sample` to `.env`
+and fill in your values.
 
 | Variable | Required | Description |
 |---|---|---|
-| `AZURE_AI_PROJECT_ENDPOINT` | For agent tools | Azure AI Foundry project endpoint URL |
+| `AZURE_AI_PROJECT_ENDPOINT` | For agent tools | AI Foundry project endpoint – `https://<account>.services.ai.azure.com/api/projects/<project>` |
+| `AZURE_OPENAI_ENDPOINT` | No | OpenAI-compatible endpoint (falls back to `AZURE_AI_PROJECT_ENDPOINT`) |
+| `AZURE_OPENAI_COMPLETION_MODEL_NAME` | For workflow tools | Completion model deployment name in the Foundry account |
+| `AZURE_OPENAI_EMBEDDING_MODEL` | For search/index tools | Embedding model deployment name (default: `text-embedding-3-small`) |
+| `AZURE_OPENAI_EMBEDDING_DIMENSIONS` | No | Embedding vector size (default: `1536`) |
 | `AZURE_AI_SEARCH_ENDPOINT` | For search/index tools | Azure AI Search service endpoint URL |
-| `AZURE_AI_SEARCH_INDEX_NAME` | No | Name of the search index (default: `project-log-index`) |
-| `AZURE_OPENAI_ENDPOINT` | For search/index tools | Azure OpenAI service endpoint URL |
-| `AZURE_OPENAI_EMBEDDING_MODEL` | No | Embedding model deployment name (default: `text-embedding-3-small`) |
-| `AZURE_OPENAI_EMBEDDING_DIMENSIONS` | No | Embedding vector dimensions (default: `1536`) |
-| `AZURE_OPENAI_COMPLETION_MODEL_NAME` | No | Chat completion model deployment name |
+| `AZURE_AI_SEARCH_INDEX_NAME` | No | Search index name (default: `project-log-index`) |
 | `APPLICATIONINSIGHTS_CONNECTION_STRING` | No | Application Insights connection string for telemetry |
 
-Example `.env` file:
-
-```env
-AZURE_AI_PROJECT_ENDPOINT=https://<hub>.api.azureml.ms/agents/v1.0/subscriptions/<sub>/resourceGroups/<rg>/providers/Microsoft.MachineLearningServices/workspaces/<project>
-AZURE_AI_SEARCH_ENDPOINT=https://<search-service>.search.windows.net
-AZURE_AI_SEARCH_INDEX_NAME=project-log-index
-AZURE_OPENAI_ENDPOINT=https://<openai-resource>.openai.azure.com
-AZURE_OPENAI_EMBEDDING_MODEL=text-embedding-3-small
-AZURE_OPENAI_EMBEDDING_DIMENSIONS=1536
-AZURE_OPENAI_COMPLETION_MODEL_NAME=gpt-4o
-```
+> **Note** – When deploying via `azd up`, all these values are written to `.env`
+> automatically by `infra/write_env.sh`. For local development run `az login` and
+> use `DefaultAzureCredential`; no API keys are needed.
 
 ---
 
@@ -326,11 +319,43 @@ using the [Azure Developer CLI (azd)](https://aka.ms/install-azd).
 
 | Resource | Purpose |
 |----------|---------|
-| Azure Container Apps (Environment + App) | Hosts the MCP server over HTTPS |
+| Virtual Network | Container Apps environment runs VNet-integrated (always) |
+| Container Apps Environment | Hosts the MCP server; set `USE_PRIVATE_INGRESS=true` for internal-only access |
 | Azure Container Registry | Stores the Docker image |
-| Log Analytics + Application Insights | Telemetry and traces |
-| User-assigned Managed Identity | Passwordless auth to all Azure services |
-| Role assignments | AI Developer · Cognitive Services User · Search Index Data Contributor |
+| Log Analytics + Application Insights | Telemetry and distributed traces |
+| Azure AI Foundry (AIServices + project) | Agents API + model deployments (completion + embedding) |
+| Azure AI Search | Vector search index for the project log |
+| User-assigned Managed Identity | Passwordless auth – assigned Azure AI Developer, Cognitive Services OpenAI User, Search Index Data Contributor, and AcrPull roles |
+
+### Infra folder structure
+
+```
+infra/
+  abbreviations.json          ← Azure resource name prefixes
+  main.bicep                  ← Subscription-scoped orchestrator
+  main.parameters.json        ← azd parameter file
+  ai/
+    foundry.bicep             ← AIServices account + Foundry project + model deployments
+    search.bicep              ← Azure AI Search
+  app/
+    server.bicep              ← MCP server Container App + identity
+  core/
+    host/
+      vnet.bicep              ← VNet with aca-apps subnet (always deployed)
+      container-apps.bicep    ← Environment + registry orchestration
+      container-apps-environment.bicep  ← Managed environment (usePrivateIngress flag)
+      container-app.bicep     ← Container App with health probes + role assignments
+      container-app-upsert.bicep
+      container-registry.bicep
+    monitor/
+      monitoring.bicep        ← Log Analytics + Application Insights
+      loganalytics.bicep
+      applicationinsights.bicep
+    security/
+      foundry-access.bicep    ← Azure AI Developer + Cognitive Services OpenAI User
+      registry-access.bicep   ← AcrPull
+      search-access.bicep     ← Search Index Data Contributor
+```
 
 ### Quick deploy
 
@@ -338,36 +363,41 @@ using the [Azure Developer CLI (azd)](https://aka.ms/install-azd).
 # 1. Login
 azd auth login
 
-# 2. Create an azd environment and deploy
+# 2. Create an azd environment
 azd env new foundry-mcp
+azd env set AZURE_LOCATION swedencentral   # or eastus2, westus3, northcentralus
+
+# 3. (Optional) private ingress – accessible only from within the VNet
+azd env set USE_PRIVATE_INGRESS true
+
+# 4. Provision infrastructure + build & deploy the container
 azd up
 ```
 
 `azd up` will:
-1. Build the Docker image (Alpine-based, multi-stage)
-2. Push it to the provisioned Container Registry
-3. Deploy the Container App with the `/health` liveness/readiness probe
-4. Write `MCP_SERVER_URL` and `APPLICATIONINSIGHTS_CONNECTION_STRING` to `.env`
+1. Provision all resources (VNet, Container Apps, Foundry, Search, monitoring)
+2. Build the Docker image (Alpine multi-stage, uv + uvicorn)
+3. Push it to the Container Registry
+4. Deploy the Container App with liveness/readiness probes at `/health`
+5. Run `infra/write_env.sh` to populate `.env` with all endpoint values
 
-### Configure Azure service endpoints
+### Private ingress
 
-After provisioning, set the Azure service endpoints in your azd environment
-(they are passed as environment variables to the Container App):
-
-```bash
-azd env set AZURE_AI_PROJECT_ENDPOINT   "https://<hub>.services.ai.azure.com/api/projects/<project>"
-azd env set AZURE_AI_SEARCH_ENDPOINT    "https://<search>.search.windows.net"
-azd env set AZURE_OPENAI_ENDPOINT       "https://<openai>.openai.azure.com"
-azd env set AZURE_OPENAI_COMPLETION_MODEL_NAME "gpt-4o"
-azd deploy   # redeploy to pick up the new env vars
-```
+When `USE_PRIVATE_INGRESS=true` the Container Apps environment is configured as
+`internal: true` and the Container App ingress is set to `external: false`.  The
+MCP server is then only reachable from within the VNet (e.g. via a jump host,
+VPN, or another Container App in the same environment).
 
 ### Connect VS Code Copilot to the deployed server
 
-1. After `azd up` completes, find `MCP_SERVER_URL` in `.env`.
-2. In VS Code, open Command Palette → **MCP: Add Server** → **HTTP**.
-3. Enter the URL (e.g. `https://<app-fqdn>/mcp`).
-4. The 10 Foundry Agent tools are now available in Copilot Chat.
+```bash
+# Find the URL
+cat .env | grep MCP_SERVER_URL
+```
+
+1. Open Command Palette in VS Code → **MCP: Add Server** → **HTTP**.
+2. Enter the URL from `.env` (e.g. `https://<app-fqdn>/mcp`).
+3. All 10 Foundry Agent tools are now available in Copilot Chat.
 
 ### Run locally with HTTP transport
 
@@ -375,21 +405,20 @@ azd deploy   # redeploy to pick up the new env vars
 # Start the HTTP server (same code, same image)
 uvicorn foundry_agents_mcp.server:http_app --host 0.0.0.0 --port 8000
 
-# In another terminal, test the health probe
+# Test the health probe
 curl http://localhost:8000/health
 # → {"status":"healthy","service":"foundry-agents-mcp-server"}
 ```
 
 ### Monitoring
 
-```bash
-# Open the Application Insights / Log Analytics dashboard
-azd monitor
-```
-
 OpenTelemetry tracing is enabled automatically when
-`APPLICATIONINSIGHTS_CONNECTION_STRING` is set. Every MCP tool call and Starlette
-request is instrumented.
+`APPLICATIONINSIGHTS_CONNECTION_STRING` is set. Every MCP tool call and HTTP
+request is traced via `azure-monitor-opentelemetry`.
+
+```bash
+azd monitor   # open the Application Insights dashboard in the portal
+```
 
 ### Tear down
 
@@ -407,7 +436,7 @@ git clone https://github.com/denniszielke/foundry-agents-mcp-server
 cd foundry-agents-mcp-server
 pip install -e ".[dev]"
 
-# Run locally
+# Run locally (stdio)
 python -m foundry_agents_mcp
 ```
 

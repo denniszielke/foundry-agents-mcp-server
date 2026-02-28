@@ -3,24 +3,25 @@
 name: foundry-agents-mcp-server
 metadata:
   template: foundry-agents-mcp-server@0.1.0
-
 services:
   server:
     project: .
     language: docker
     host: containerapp
     docker:
-      remoteBuild: true
       path: ./Dockerfile
       context: .
-
+infra:
+  provider: bicep
 hooks:
   postprovision:
     posix:
       shell: sh
-      run: ./infra/write_env.sh
       continueOnError: true
+      interactive: false
+      run: infra/write_env.sh
     windows:
       shell: pwsh
-      run: ./infra/write_env.ps1
       continueOnError: true
+      interactive: false
+      run: infra/write_env.ps1
