@@ -2,22 +2,40 @@
 
 An [MCP (Model Context Protocol)](https://modelcontextprotocol.io) server that
 exposes Azure AI Foundry agents, workflows, and AI Search vector-database
-capabilities as MCP tools. It is designed to be launched with
-[uvx](https://docs.astral.sh/uv/concepts/tools/) and works with any MCP-compatible
-client (Claude Desktop, VS Code Copilot, etc.).
+capabilities as MCP tools.
 
-## Features
+Supports two transports:
+- **stdio** – for local use with `uvx` or VS Code Copilot
+- **HTTP** – for deployment to **Azure Container Apps** via `azd up`
 
-The server is organized into three logical namespaces:
+## Repository layout
+
+```
+src/
+  foundry_agents_mcp/     ← MCP server (10 tools across 4 namespaces)
+  foundry_agents/         ← Standalone agent & workflow implementations
+    definitions/          ← Declarative YAML agent & workflow definitions
+    case_study_agent.py   ← deploy-case-study-agent CLI command
+    architecture_agent.py ← deploy-architecture-agent CLI command
+    project_log_workflow.py ← run-project-log-workflow CLI command
+infra/
+  main.bicep              ← Container Apps + managed identity + role assignments
+  app/server.bicep        ← Container App definition with health probes
+  core/security/role.bicep
+azure.yaml                ← azd service definition
+Dockerfile                ← Multi-stage Alpine build
+entrypoint.sh             ← Selects stdio or HTTP transport at startup
+.env.sample               ← Template for local environment configuration
+```
+
+## MCP tool namespaces
 
 | Namespace | Tools |
 |-----------|-------|
-| `agents_*` | List agents/workflows · Invoke an agent · Check invocation status · Get invocation result |
-| `search_*` | Semantic search in vector DB · Add documents to vector DB |
-| `index_*`  | Create project-log index · Ingest project log entries |
-
-All Azure services authenticate via **DefaultAzureCredential** (managed identity,
-environment credentials, Azure CLI, etc.).
+| `agents_*` | List agents · Invoke agent · Check status · Get result |
+| `search_*` | Semantic vector search · Add document to vector DB |
+| `index_*`  | Create project-log index · Ingest project log entry |
+| `workflows_*` | List sample workflows · Run project-log pipeline |
 
 ---
 
@@ -260,6 +278,124 @@ automatically if it does not exist.
 - *"Add a workshop log: title='Azure AI Day', entry_type='workshop', customer_name='Contoso', context='...'"*
 - *"Index a new meeting summary about the cloud migration project"*
 - *"Store this repo documentation with tags: python, mcp, azure"*
+
+---
+
+## Sample agents and workflow
+
+The `foundry_agents` package provides two sample agents and a pipeline workflow
+that work independently of the MCP server.
+
+### Deploy agents to Azure AI Foundry
+
+Register the sample agents in your Foundry project (they then appear in
+`agents_list_agents` and can be invoked with `agents_invoke_agent`):
+
+```bash
+deploy-case-study-agent      # registers CaseStudyAgent
+deploy-architecture-agent    # registers ArchitectureAgent
+```
+
+### Run the project-log workflow
+
+Fetch a Microsoft customer story, extract metadata, generate an architecture
+diagram, and store everything in the vector index – all in one command:
+
+```bash
+run-project-log-workflow \
+  --url "https://www.microsoft.com/en/customers/story/25676-commerzbank-ag-azure-ai-foundry-agent-service" \
+  --project "Commerzbank AI Platform"
+```
+
+Or trigger the same pipeline from the MCP server:
+```
+Run the project log workflow for https://www.microsoft.com/en/customers/story/...
+```
+
+The workflow **automatically uses deployed Foundry agents** when available and
+falls back to direct Azure OpenAI inference otherwise.
+
+---
+
+## Deploy to Azure Container Apps
+
+The server can be deployed to **Azure Container Apps** with a single command
+using the [Azure Developer CLI (azd)](https://aka.ms/install-azd).
+
+### What gets provisioned
+
+| Resource | Purpose |
+|----------|---------|
+| Azure Container Apps (Environment + App) | Hosts the MCP server over HTTPS |
+| Azure Container Registry | Stores the Docker image |
+| Log Analytics + Application Insights | Telemetry and traces |
+| User-assigned Managed Identity | Passwordless auth to all Azure services |
+| Role assignments | AI Developer · Cognitive Services User · Search Index Data Contributor |
+
+### Quick deploy
+
+```bash
+# 1. Login
+azd auth login
+
+# 2. Create an azd environment and deploy
+azd env new foundry-mcp
+azd up
+```
+
+`azd up` will:
+1. Build the Docker image (Alpine-based, multi-stage)
+2. Push it to the provisioned Container Registry
+3. Deploy the Container App with the `/health` liveness/readiness probe
+4. Write `MCP_SERVER_URL` and `APPLICATIONINSIGHTS_CONNECTION_STRING` to `.env`
+
+### Configure Azure service endpoints
+
+After provisioning, set the Azure service endpoints in your azd environment
+(they are passed as environment variables to the Container App):
+
+```bash
+azd env set AZURE_AI_PROJECT_ENDPOINT   "https://<hub>.services.ai.azure.com/api/projects/<project>"
+azd env set AZURE_AI_SEARCH_ENDPOINT    "https://<search>.search.windows.net"
+azd env set AZURE_OPENAI_ENDPOINT       "https://<openai>.openai.azure.com"
+azd env set AZURE_OPENAI_COMPLETION_MODEL_NAME "gpt-4o"
+azd deploy   # redeploy to pick up the new env vars
+```
+
+### Connect VS Code Copilot to the deployed server
+
+1. After `azd up` completes, find `MCP_SERVER_URL` in `.env`.
+2. In VS Code, open Command Palette → **MCP: Add Server** → **HTTP**.
+3. Enter the URL (e.g. `https://<app-fqdn>/mcp`).
+4. The 10 Foundry Agent tools are now available in Copilot Chat.
+
+### Run locally with HTTP transport
+
+```bash
+# Start the HTTP server (same code, same image)
+uvicorn foundry_agents_mcp.server:http_app --host 0.0.0.0 --port 8000
+
+# In another terminal, test the health probe
+curl http://localhost:8000/health
+# → {"status":"healthy","service":"foundry-agents-mcp-server"}
+```
+
+### Monitoring
+
+```bash
+# Open the Application Insights / Log Analytics dashboard
+azd monitor
+```
+
+OpenTelemetry tracing is enabled automatically when
+`APPLICATIONINSIGHTS_CONNECTION_STRING` is set. Every MCP tool call and Starlette
+request is instrumented.
+
+### Tear down
+
+```bash
+azd down
+```
 
 ---
 

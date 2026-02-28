@@ -12,7 +12,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import Optional
 
-from azure.identity import DefaultAzureCredential, get_bearer_token_provider
+from azure.identity import DefaultAzureCredential, ManagedIdentityCredential, get_bearer_token_provider
 from azure.search.documents import SearchClient
 from dotenv import load_dotenv
 from openai import AzureOpenAI
@@ -29,6 +29,8 @@ AZURE_OPENAI_ENDPOINT: str = os.getenv("AZURE_OPENAI_ENDPOINT", "")
 AZURE_OPENAI_EMBEDDING_MODEL: str = os.getenv("AZURE_OPENAI_EMBEDDING_MODEL", "text-embedding-3-small")
 AZURE_OPENAI_EMBEDDING_DIMENSIONS: int = int(os.getenv("AZURE_OPENAI_EMBEDDING_DIMENSIONS", "1536"))
 AZURE_OPENAI_COMPLETION_MODEL_NAME: str = os.getenv("AZURE_OPENAI_COMPLETION_MODEL_NAME", "")
+_RUNNING_IN_PRODUCTION: bool = os.getenv("RUNNING_IN_PRODUCTION", "false").lower() == "true"
+_AZURE_CLIENT_ID: str = os.getenv("AZURE_CLIENT_ID", "")
 
 # ── Lazy singletons ────────────────────────────────────────────────────────────
 _credential: Optional[DefaultAzureCredential] = None
@@ -38,10 +40,13 @@ _search_client: Optional[SearchClient] = None
 _project_client = None
 
 
-def get_credential() -> DefaultAzureCredential:
+def get_credential() -> DefaultAzureCredential | ManagedIdentityCredential:
     global _credential
     if _credential is None:
-        _credential = DefaultAzureCredential()
+        if _RUNNING_IN_PRODUCTION and _AZURE_CLIENT_ID:
+            _credential = ManagedIdentityCredential(client_id=_AZURE_CLIENT_ID)
+        else:
+            _credential = DefaultAzureCredential()
     return _credential
 
 
