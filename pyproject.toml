@@ -1,0 +1,27 @@
+[project]
+name = "foundry-agents-mcp-server"
+version = "0.1.0"
+description = "MCP server for Azure AI Foundry agents, workflows, and vector search"
+readme = "README.md"
+requires-python = ">=3.10"
+license = "MIT"
+keywords = ["mcp", "azure", "ai", "foundry", "agents", "search"]
+dependencies = [
+    "fastmcp>=2.0.0",
+    "azure-ai-projects>=1.0.0b1",
+    "azure-ai-agents>=1.0.0b1",
+    "azure-search-documents>=11.5.0",
+    "azure-identity>=1.15.0",
+    "openai>=1.0.0",
+    "python-dotenv>=1.0.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/foundry_agents_mcp"]
+
+[project.scripts]
+foundry-agents-mcp-server = "foundry_agents_mcp.server:main"
