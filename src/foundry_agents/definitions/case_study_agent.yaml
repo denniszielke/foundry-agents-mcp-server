@@ -1,9 +1,7 @@
-# CaseStudyAgent – Declarative Agent Definition  (MOVED)
+# CaseStudyAgent – Declarative Agent Definition
 #
-# The authoritative copy of this file is now at:
-#   src/foundry_agents/definitions/case_study_agent.yaml
-#
-# Deploy with:  deploy-case-study-agent
+# This agent retrieves a Microsoft customer success story from a given URL and
+# extracts structured metadata for ingestion into the project-log vector index.
 #
 # Compatible with the `agent-framework-declarative` Python package.
 # Load with:

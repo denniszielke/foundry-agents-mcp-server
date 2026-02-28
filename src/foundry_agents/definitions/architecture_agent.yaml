@@ -1,9 +1,7 @@
-# ArchitectureAgent – Declarative Agent Definition  (MOVED)
+# ArchitectureAgent – Declarative Agent Definition
 #
-# The authoritative copy of this file is now at:
-#   src/foundry_agents/definitions/architecture_agent.yaml
-#
-# Deploy with:  deploy-architecture-agent
+# This agent generates a structured JSON architecture diagram from a project
+# description extracted by the CaseStudyAgent.
 #
 # Compatible with the `agent-framework-declarative` Python package.
 # Load with:

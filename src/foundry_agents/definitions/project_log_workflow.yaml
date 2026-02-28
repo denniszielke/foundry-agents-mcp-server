@@ -1,9 +1,7 @@
-# ProjectLogWorkflow – Declarative Workflow Definition  (MOVED)
+# ProjectLogWorkflow – Declarative Workflow Definition
 #
-# The authoritative copy of this file is now at:
-#   src/foundry_agents/definitions/project_log_workflow.yaml
-#
-# Run with:  run-project-log-workflow --url <story_url>
+# This workflow sequentially invokes two Azure AI Foundry agents to produce a
+# complete project-log entry for a Microsoft customer success story:
 #
 #   1. CaseStudyAgent  – retrieves and structures the customer story metadata
 #   2. ArchitectureAgent – generates the solution architecture diagram
