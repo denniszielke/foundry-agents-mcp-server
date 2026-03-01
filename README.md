@@ -52,14 +52,14 @@ entrypoint.sh             ← Selects stdio or HTTP transport at startup
 ## Quick start with uvx
 
 ```bash
-# Install and run in one command (reads env vars from the shell)
-uvx foundry-agents-mcp-server
+# Install and run directly from GitHub (no PyPI package required)
+uvx --from git+https://github.com/denniszielke/foundry-agents-mcp-server@main foundry-agents-mcp-server
 ```
 
 Or with an explicit environment file:
 
 ```bash
-uvx --env-file .env foundry-agents-mcp-server
+uvx --from git+https://github.com/denniszielke/foundry-agents-mcp-server@main --env-file .env foundry-agents-mcp-server
 ```
 
 ---
@@ -95,7 +95,7 @@ Add the following to your `claude_desktop_config.json`:
   "mcpServers": {
     "foundry-agents": {
       "command": "uvx",
-      "args": ["foundry-agents-mcp-server"],
+      "args": ["--from", "git+https://github.com/denniszielke/foundry-agents-mcp-server@main", "foundry-agents-mcp-server"],
       "env": {
         "AZURE_AI_PROJECT_ENDPOINT": "https://...",
         "AZURE_AI_SEARCH_ENDPOINT": "https://...",
@@ -370,16 +370,29 @@ azd env set AZURE_LOCATION swedencentral   # or eastus2, westus3, northcentralus
 # 3. (Optional) private ingress – accessible only from within the VNet
 azd env set USE_PRIVATE_INGRESS true
 
-# 4. Provision infrastructure + build & deploy the container
+# 4. Provision infrastructure (no local Docker required)
 azd up
 ```
 
 `azd up` will:
 1. Provision all resources (VNet, Container Apps, Foundry, Search, monitoring)
-2. Build the Docker image (Alpine multi-stage, uv + uvicorn)
-3. Push it to the Container Registry
-4. Deploy the Container App with liveness/readiness probes at `/health`
-5. Run `infra/write_env.sh` to populate `.env` with all endpoint values
+2. Run `infra/write_env.sh` to populate `.env` with all endpoint values
+
+### Build and deploy the container
+
+The container image is built remotely using Azure Container Registry (ACR) –
+**no local Docker installation is required**. After `azd up` has provisioned the
+infrastructure, run:
+
+```bash
+# Build in ACR and deploy the Container App
+./azd-hooks/deploy.sh foundry-mcp   # pass your azd environment name
+```
+
+The script will:
+1. Build the Docker image remotely in ACR via `az acr build`
+2. Deploy the Container App via a Bicep deployment (`infra/app/server.bicep`)
+3. Print the MCP server URL
 
 ### Private ingress
 

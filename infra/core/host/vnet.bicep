@@ -16,6 +16,14 @@ resource vnet 'Microsoft.Network/virtualNetworks@2021-05-01' = {
           addressPrefix: '10.0.0.0/21'
           privateEndpointNetworkPolicies: 'Disabled'
           privateLinkServiceNetworkPolicies: 'Enabled'
+          delegations: [
+            {
+              name: 'Microsoft.App.environments'
+              properties: {
+                serviceName: 'Microsoft.App/environments'
+              }
+            }
+          ]
         }
       }
     ]

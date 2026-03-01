@@ -28,9 +28,9 @@ var resourceToken = toLower(uniqueString(subscription().id, environmentName, loc
 var tags = { 'azd-env-name': environmentName }
 
 // Model deployment configuration
-param completionDeploymentModelName string = 'gpt-4o'
-param completionModelName string = 'gpt-4o'
-param completionModelVersion string = '2024-11-20'
+param completionDeploymentModelName string = 'gpt-5-nano'
+param completionModelName string = 'gpt-5-nano'
+param completionModelVersion string = '2025-08-07'
 
 param embeddingDeploymentModelName string = 'text-embedding-3-small'
 param embeddingModelName string = 'text-embedding-3-small'
