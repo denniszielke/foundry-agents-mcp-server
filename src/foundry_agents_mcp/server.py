@@ -25,11 +25,15 @@ HTTP / Container Apps (uvicorn)::
 
 import logging
 import os
+import dotenv
 
 from azure.core.settings import settings as azure_settings
 from starlette.responses import JSONResponse
 
 from foundry_agents_mcp.app import mcp
+
+# Load environment variables from a .env file if present
+dotenv.load_dotenv()
 
 # Import all tool modules so their @mcp.tool() decorators register the tools
 # against the shared mcp instance defined in app.py.
